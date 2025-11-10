@@ -20,14 +20,61 @@ Automação completa para coletar dados de estabelecimentos do Google Maps (nome
 
 ## 🔧 Instalação
 
-1. Clone ou baixe este repositório
+### Windows
 
-2. Instale as dependências:
-```bash
-pip install -r requirements.txt
-```
+1. **Instale o Python 3.9 ou superior**
+   - Baixe em: https://www.python.org/downloads/
+   - ⚠️ **IMPORTANTE**: Durante a instalação, marque a opção "Add Python to PATH"
 
-3. Certifique-se de ter o Chrome instalado. O Selenium 4+ gerenciará o ChromeDriver automaticamente.
+2. **Instale o Google Chrome**
+   - Baixe em: https://www.google.com/chrome/
+   - O ChromeDriver será gerenciado automaticamente pelo Selenium
+
+3. **Clone ou baixe este repositório**
+   ```bash
+   git clone https://github.com/LuizHillebrande/automacao_maps.git
+   cd automacao_maps
+   ```
+
+4. **Instale as dependências**
+   ```bash
+   pip install -r requirements.txt
+   ```
+   
+   Ou se o comando acima não funcionar:
+   ```bash
+   python -m pip install -r requirements.txt
+   ```
+
+5. **Execute o aplicativo**
+   ```bash
+   python main.py
+   ```
+
+### macOS / Linux
+
+1. **Instale o Python 3.9+** (geralmente já vem instalado)
+   ```bash
+   python3 --version
+   ```
+
+2. **Instale o Google Chrome**
+
+3. **Clone o repositório**
+   ```bash
+   git clone https://github.com/LuizHillebrande/automacao_maps.git
+   cd automacao_maps
+   ```
+
+4. **Instale as dependências**
+   ```bash
+   pip3 install -r requirements.txt
+   ```
+
+5. **Execute o aplicativo**
+   ```bash
+   python3 main.py
+   ```
 
 ## 🎯 Como Usar
 

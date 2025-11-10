@@ -35,6 +35,7 @@ class GoogleMapsScraperGUI:
         self.is_running = False
         self.all_results = []
         self.current_save_file = None  # Arquivo de salvamento da sessão atual
+        self.progress_file = os.path.join("output", "progresso.json")  # Arquivo de progresso
         
         # Garante que a pasta output existe
         self._ensure_output_dir()
@@ -133,6 +134,9 @@ class GoogleMapsScraperGUI:
         
         remove_all_cidades_btn = ctk.CTkButton(cidades_buttons_frame, text="Remover Todas", command=self._remove_all_cidades, fg_color="#dc3545", hover_color="#c82333")
         remove_all_cidades_btn.pack(side="left", padx=5)
+        
+        remove_processed_btn = ctk.CTkButton(cidades_buttons_frame, text="🗑️ Remover Processadas", command=self._remove_processed_cities, fg_color="#ffc107", hover_color="#e0a800")
+        remove_processed_btn.pack(side="left", padx=5)
         
         # Frame de controle
         control_frame = ctk.CTkFrame(main_frame)
@@ -364,6 +368,152 @@ class GoogleMapsScraperGUI:
             self.cidades_listbox.delete(0, tk.END)
             self.status_label.configure(text="✅ Todas as cidades foram removidas")
     
+    def _save_progress(self, nicho: str, cidade: str):
+        """Salva o progresso atual (última cidade processada)."""
+        try:
+            self._ensure_output_dir()
+            progress_data = {
+                'ultimo_nicho': nicho,
+                'ultima_cidade': cidade,
+                'timestamp': datetime.now().isoformat(),
+                'cidades_processadas': self._get_processed_cities()
+            }
+            
+            with open(self.progress_file, 'w', encoding='utf-8') as f:
+                json.dump(progress_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Erro ao salvar progresso: {e}")
+    
+    def _load_progress(self) -> dict:
+        """Carrega o progresso salvo."""
+        try:
+            if os.path.exists(self.progress_file):
+                with open(self.progress_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Erro ao carregar progresso: {e}")
+        return None
+    
+    def _clear_progress(self):
+        """Limpa o arquivo de progresso."""
+        try:
+            if os.path.exists(self.progress_file):
+                os.remove(self.progress_file)
+        except Exception as e:
+            print(f"Erro ao limpar progresso: {e}")
+    
+    def _get_processed_cities(self) -> List[str]:
+        """Retorna lista de cidades já processadas baseado no progresso."""
+        progress_data = self._load_progress()
+        if not progress_data:
+            return []
+        
+        processed = []
+        ultimo_nicho = progress_data.get('ultimo_nicho')
+        ultima_cidade = progress_data.get('ultima_cidade')
+        
+        if ultimo_nicho and ultima_cidade:
+            # Pega todas as cidades até a última processada para cada nicho
+            nichos = self.nichos.copy()
+            cidades = list(self.cidades_listbox.get(0, tk.END))
+            
+            for nicho in nichos:
+                for cidade in cidades:
+                    # Se chegou no último processado, para
+                    if nicho == ultimo_nicho and cidade == ultima_cidade:
+                        processed.append(cidade)
+                        return processed
+                    # Adiciona cidades anteriores
+                    if cidade not in processed:
+                        processed.append(cidade)
+        
+        return processed
+    
+    def _remove_processed_cities(self):
+        """Remove cidades já processadas da lista."""
+        progress_data = self._load_progress()
+        if not progress_data:
+            messagebox.showinfo("Info", "Não há progresso salvo. Nenhuma cidade foi processada anteriormente.")
+            return
+        
+        ultimo_nicho = progress_data.get('ultimo_nicho', 'N/A')
+        ultima_cidade = progress_data.get('ultima_cidade', 'N/A')
+        timestamp = progress_data.get('timestamp', 'N/A')
+        
+        resposta = messagebox.askyesno(
+            "Remover Cidades Processadas",
+            f"Último processamento:\n"
+            f"  Nicho: {ultimo_nicho}\n"
+            f"  Cidade: {ultima_cidade}\n"
+            f"  Data: {timestamp}\n\n"
+            f"Deseja remover as cidades já processadas da lista?",
+            icon="question"
+        )
+        
+        if resposta:
+            self._remove_processed_cities_silent(progress_data, show_message=True)
+    
+    def _remove_processed_cities_silent(self, progress_data: dict, show_message: bool = False):
+        """Remove cidades processadas sem mostrar diálogo."""
+        ultimo_nicho = progress_data.get('ultimo_nicho')
+        ultima_cidade = progress_data.get('ultima_cidade')
+        
+        if not ultimo_nicho or not ultima_cidade:
+            return
+        
+        cidades_atual = list(self.cidades_listbox.get(0, tk.END))
+        nichos = self.nichos.copy()
+        
+        cidades_para_remover = set()
+        encontrou_ultima = False
+        
+        # Identifica quais cidades devem ser removidas
+        # Lógica: Para o último nicho processado, remove todas as cidades até e incluindo a última
+        # Para nichos anteriores ao último, remove todas as cidades
+        for nicho in nichos:
+            if encontrou_ultima:
+                break
+                
+            # Se é o último nicho processado
+            if nicho == ultimo_nicho:
+                for cidade in cidades_atual:
+                    # Se chegou no último processado, marca e para
+                    if cidade == ultima_cidade:
+                        encontrou_ultima = True
+                        # Inclui a última também (vai reprocessar para garantir)
+                        cidades_para_remover.add(cidade)
+                        break
+                    # Marca cidades anteriores à última processada
+                    cidades_para_remover.add(cidade)
+            else:
+                # Para nichos anteriores ao último, todas as cidades já foram processadas
+                for cidade in cidades_atual:
+                    cidades_para_remover.add(cidade)
+        
+        # Remove as cidades identificadas (de trás para frente para evitar problemas de índice)
+        cidades_removidas = []
+        cidades_lista = list(self.cidades_listbox.get(0, tk.END))
+        
+        for i in range(len(cidades_lista) - 1, -1, -1):
+            cidade = cidades_lista[i]
+            if cidade in cidades_para_remover:
+                self.cidades_listbox.delete(i)
+                cidades_removidas.append(cidade)
+        
+        if cidades_removidas:
+            self.status_label.configure(
+                text=f"✅ {len(cidades_removidas)} cidade(s) já processada(s) foram removidas"
+            )
+            if show_message:
+                messagebox.showinfo(
+                    "Cidades Removidas",
+                    f"{len(cidades_removidas)} cidade(s) já processada(s) foram removidas da lista.\n\n"
+                    f"Você pode continuar o processamento das cidades restantes."
+                )
+        else:
+            if show_message:
+                messagebox.showinfo("Info", "Nenhuma cidade foi removida. Todas as cidades já foram processadas ou não há correspondência.")
+    
     def _select_all_cidades(self):
         """Seleciona todas as cidades do estado atual."""
         if not self.municipios:
@@ -461,6 +611,28 @@ class GoogleMapsScraperGUI:
         if not self._validate_inputs():
             return
         
+        # Verifica se há progresso salvo
+        progress_data = self._load_progress()
+        if progress_data:
+            resposta = messagebox.askyesno(
+                "Continuar Processamento",
+                f"Foi detectado um processamento anterior que não foi concluído.\n\n"
+                f"Último processado:\n"
+                f"  Nicho: {progress_data.get('ultimo_nicho', 'N/A')}\n"
+                f"  Cidade: {progress_data.get('ultima_cidade', 'N/A')}\n\n"
+                f"Deseja continuar de onde parou?\n\n"
+                f"Sim = Continuar\n"
+                f"Não = Começar do zero",
+                icon="question"
+            )
+            
+            if resposta:
+                # Continua de onde parou - remove cidades já processadas
+                self._remove_processed_cities_silent(progress_data, show_message=False)
+            else:
+                # Limpa o progresso e começa do zero
+                self._clear_progress()
+        
         self.is_running = True
         self.all_results = []
         self.current_save_file = None  # Reseta o arquivo de salvamento
@@ -508,8 +680,14 @@ class GoogleMapsScraperGUI:
                     try:
                         results = self.scraper.scrape_nicho_cidade(nicho, cidade)
                         self.all_results.extend(results)
+                        
+                        # Salva progresso após processar cidade com sucesso
+                        self._save_progress(nicho, cidade)
+                        
                     except Exception as e:
                         print(f"Erro ao buscar {nicho} em {cidade}: {e}")
+                        # Salva progresso mesmo em caso de erro parcial
+                        self._save_progress(nicho, cidade)
                     
                     # Fecha o navegador após cada busca
                     if self.scraper:
@@ -530,12 +708,15 @@ class GoogleMapsScraperGUI:
                 # Salva uma última vez ao final (caso tenha algo pendente)
                 self._auto_save_results()
                 
+                # Limpa o progresso quando termina com sucesso
+                self._clear_progress()
+                
                 self.root.after(0, lambda: self.status_label.configure(
                     text=f"✅ Coleta concluída! {len(self.all_results)} resultados encontrados. Arquivo salvo: {self.current_save_file}"
                 ))
                 self.root.after(0, lambda: self.export_btn.configure(state="normal"))
             else:
-                # Se foi parado, salva o que tem
+                # Se foi parado, salva o que tem (mas mantém o progresso)
                 self._auto_save_results()
                 self.root.after(0, lambda: self.status_label.configure(
                     text=f"⏸️ Processo interrompido. {len(self.all_results)} resultados salvos em: {self.current_save_file}"

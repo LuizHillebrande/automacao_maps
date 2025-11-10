@@ -38,6 +38,8 @@ output/*.xlsx
 output/*.csv
 # Mantém nichos.json para facilitar o uso
 # output/nichos.json
+# Ignora arquivo de progresso (específico de cada execução)
+output/progresso.json
 
 # OS
 .DS_Store
