@@ -9,6 +9,7 @@ import threading
 import os
 import time
 import json
+import glob
 from datetime import datetime
 
 from ibge_api import IBGEAPI
@@ -123,13 +124,21 @@ class GoogleMapsScraperGUI:
         # Lista de cidades selecionadas
         ctk.CTkLabel(location_frame, text="Cidades Selecionadas:", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(10, 5))
         
-        self.cidades_listbox = tk.Listbox(location_frame, height=8, bg="#2b2b2b", fg="white", selectbackground="#1f6aa5")
+        # Listbox com seleção múltipla (Shift para intervalo, Ctrl para múltiplas)
+        self.cidades_listbox = tk.Listbox(
+            location_frame, 
+            height=8, 
+            bg="#2b2b2b", 
+            fg="white", 
+            selectbackground="#1f6aa5",
+            selectmode=tk.EXTENDED  # Permite seleção múltipla
+        )
         self.cidades_listbox.pack(fill="x", padx=10, pady=(0, 10))
         
         cidades_buttons_frame = ctk.CTkFrame(location_frame)
         cidades_buttons_frame.pack(fill="x", padx=10, pady=(0, 10))
         
-        remove_cidade_btn = ctk.CTkButton(cidades_buttons_frame, text="Remover Selecionada", command=self._remove_cidade)
+        remove_cidade_btn = ctk.CTkButton(cidades_buttons_frame, text="Remover Selecionadas", command=self._remove_cidade)
         remove_cidade_btn.pack(side="left", padx=(0, 5))
         
         remove_all_cidades_btn = ctk.CTkButton(cidades_buttons_frame, text="Remover Todas", command=self._remove_all_cidades, fg_color="#dc3545", hover_color="#c82333")
@@ -344,12 +353,20 @@ class GoogleMapsScraperGUI:
             self.cidades_listbox.insert(tk.END, cidade)
     
     def _remove_cidade(self):
-        """Remove a cidade selecionada."""
+        """Remove as cidades selecionadas (suporta seleção múltipla)."""
         selection = self.cidades_listbox.curselection()
         if selection:
-            self.cidades_listbox.delete(selection[0])
+            # Remove de trás para frente para evitar problemas com índices
+            # Ordena os índices em ordem decrescente
+            indices_ordenados = sorted(selection, reverse=True)
+            for idx in indices_ordenados:
+                self.cidades_listbox.delete(idx)
+            
+            total = len(selection)
+            if total > 1:
+                self.status_label.configure(text=f"✅ {total} cidade(s) removida(s)")
         else:
-            messagebox.showwarning("Aviso", "Selecione uma cidade para remover!")
+            messagebox.showwarning("Aviso", "Selecione uma ou mais cidades para remover!\n\nDica: Use Shift para selecionar intervalo ou Ctrl para selecionar múltiplas.")
     
     def _remove_all_cidades(self):
         """Remove todas as cidades selecionadas."""
@@ -401,6 +418,52 @@ class GoogleMapsScraperGUI:
                 os.remove(self.progress_file)
         except Exception as e:
             print(f"Erro ao limpar progresso: {e}")
+    
+    def _load_previous_results(self) -> List[Dict]:
+        """Carrega resultados anteriores do arquivo Excel mais recente."""
+        try:
+            import pandas as pd
+            import glob
+            
+            output_dir = os.path.abspath("output")
+            # Busca todos os arquivos de resultados
+            pattern = os.path.join(output_dir, "resultados_*.xlsx")
+            files = glob.glob(pattern)
+            
+            if not files:
+                return []
+            
+            # Pega o arquivo mais recente
+            latest_file = max(files, key=os.path.getmtime)
+            
+            # Lê o arquivo Excel
+            df = pd.read_excel(latest_file, engine='openpyxl')
+            
+            # Converte de volta para o formato de dicionário
+            # Renomeia as colunas de volta para o formato interno
+            df.columns = df.columns.str.strip()
+            column_mapping = {
+                'Nicho': 'nicho',
+                'Cidade': 'cidade',
+                'Nome da Empresa': 'nome',
+                'Endereço': 'endereco',
+                'Telefone': 'telefone',
+                'Avaliação': 'avaliacao',
+                'Nº de Avaliações': 'num_avaliacoes'
+            }
+            
+            # Renomeia colunas se necessário
+            df = df.rename(columns=column_mapping)
+            
+            # Converte para lista de dicionários
+            results = df.to_dict('records')
+            
+            print(f"📂 Carregados {len(results)} resultados anteriores de: {latest_file}")
+            return results
+            
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar resultados anteriores: {e}")
+            return []
     
     def _get_processed_cities(self) -> List[str]:
         """Retorna lista de cidades já processadas baseado no progresso."""
@@ -457,6 +520,7 @@ class GoogleMapsScraperGUI:
         """Remove cidades processadas sem mostrar diálogo."""
         ultimo_nicho = progress_data.get('ultimo_nicho')
         ultima_cidade = progress_data.get('ultima_cidade')
+        cidades_processadas = progress_data.get('cidades_processadas', [])
         
         if not ultimo_nicho or not ultima_cidade:
             return
@@ -465,30 +529,39 @@ class GoogleMapsScraperGUI:
         nichos = self.nichos.copy()
         
         cidades_para_remover = set()
-        encontrou_ultima = False
         
-        # Identifica quais cidades devem ser removidas
-        # Lógica: Para o último nicho processado, remove todas as cidades até e incluindo a última
-        # Para nichos anteriores ao último, remove todas as cidades
-        for nicho in nichos:
-            if encontrou_ultima:
-                break
-                
-            # Se é o último nicho processado
-            if nicho == ultimo_nicho:
-                for cidade in cidades_atual:
-                    # Se chegou no último processado, marca e para
-                    if cidade == ultima_cidade:
-                        encontrou_ultima = True
-                        # Inclui a última também (vai reprocessar para garantir)
+        # Se temos o array cidades_processadas, usa ele (mais preciso)
+        if cidades_processadas and isinstance(cidades_processadas, list):
+            # Remove apenas as cidades que estão no array cidades_processadas
+            for cidade in cidades_atual:
+                if cidade in cidades_processadas:
+                    cidades_para_remover.add(cidade)
+        else:
+            # Fallback: usa a lógica antiga baseada em ultimo_nicho e ultima_cidade
+            encontrou_ultima = False
+            
+            # Identifica quais cidades devem ser removidas
+            # Lógica: Para o último nicho processado, remove todas as cidades até e incluindo a última
+            # Para nichos anteriores ao último, remove todas as cidades
+            for nicho in nichos:
+                if encontrou_ultima:
+                    break
+                    
+                # Se é o último nicho processado
+                if nicho == ultimo_nicho:
+                    for cidade in cidades_atual:
+                        # Se chegou no último processado, marca e para
+                        if cidade == ultima_cidade:
+                            encontrou_ultima = True
+                            # Inclui a última também (vai reprocessar para garantir)
+                            cidades_para_remover.add(cidade)
+                            break
+                        # Marca cidades anteriores à última processada
                         cidades_para_remover.add(cidade)
-                        break
-                    # Marca cidades anteriores à última processada
-                    cidades_para_remover.add(cidade)
-            else:
-                # Para nichos anteriores ao último, todas as cidades já foram processadas
-                for cidade in cidades_atual:
-                    cidades_para_remover.add(cidade)
+                else:
+                    # Para nichos anteriores ao último, todas as cidades já foram processadas
+                    for cidade in cidades_atual:
+                        cidades_para_remover.add(cidade)
         
         # Remove as cidades identificadas (de trás para frente para evitar problemas de índice)
         cidades_removidas = []
@@ -629,21 +702,39 @@ class GoogleMapsScraperGUI:
             if resposta:
                 # Continua de onde parou - remove cidades já processadas
                 self._remove_processed_cities_silent(progress_data, show_message=False)
+                # Carrega resultados anteriores
+                previous_results = self._load_previous_results()
+                self.all_results = previous_results
+                # Tenta encontrar o arquivo mais recente para continuar salvando nele
+                output_dir = os.path.abspath("output")
+                pattern = os.path.join(output_dir, "resultados_*.xlsx")
+                files = glob.glob(pattern)
+                if files:
+                    # Usa o arquivo mais recente
+                    self.current_save_file = max(files, key=os.path.getmtime)
+                    self.status_label.configure(
+                        text=f"📂 Continuando processamento. {len(previous_results)} resultados anteriores carregados."
+                    )
             else:
                 # Limpa o progresso e começa do zero
                 self._clear_progress()
+                self.all_results = []
+                self.current_save_file = None
+        else:
+            # Não há progresso salvo, começa do zero
+            self.all_results = []
+            self.current_save_file = None
         
         self.is_running = True
-        self.all_results = []
-        self.current_save_file = None  # Reseta o arquivo de salvamento
         
         # Garante que a pasta output existe
         self._ensure_output_dir()
         
-        # Cria o arquivo de salvamento único para esta sessão
-        output_dir = os.path.abspath("output")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.current_save_file = os.path.join(output_dir, f"resultados_{timestamp}.xlsx")
+        # Cria o arquivo de salvamento único para esta sessão (apenas se não estiver continuando)
+        if not self.current_save_file:
+            output_dir = os.path.abspath("output")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.current_save_file = os.path.join(output_dir, f"resultados_{timestamp}.xlsx")
         
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
