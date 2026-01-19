@@ -66,14 +66,39 @@ class GoogleMapsScraper:
             True se a busca foi realizada com sucesso
         """
         try:
-            # Localiza o campo de busca
-            search_box = self.wait.until(
-                EC.presence_of_element_located((By.ID, "searchboxinput"))
-            )
+            # Tenta múltiplos seletores para encontrar o campo de busca
+            # O Google Maps muda frequentemente os seletores
+            search_selectors = [
+                (By.ID, "UGojuc"),  # Novo ID atualizado
+                (By.NAME, "q"),  # Atributo name
+                (By.ID, "searchboxinput"),  # ID antigo (fallback)
+                (By.CSS_SELECTOR, "input[role='combobox'][name='q']"),  # Seletor CSS mais específico
+                (By.CSS_SELECTOR, "input.UGojuc"),  # Por classe
+                (By.CSS_SELECTOR, "input[autocomplete='off'][name='q']"),  # Por atributos
+            ]
+            
+            search_box = None
+            for by, selector in search_selectors:
+                try:
+                    search_box = self.wait.until(
+                        EC.presence_of_element_located((by, selector))
+                    )
+                    print(f"✓ Campo de busca encontrado usando: {by} = {selector}")
+                    break
+                except TimeoutException:
+                    continue
+            
+            if not search_box:
+                print("❌ Não foi possível encontrar o campo de busca")
+                return False
             
             # Limpa o campo
             search_box.clear()
             time.sleep(random.uniform(0.5, 1))
+            
+            # Foca no campo (garante que está ativo)
+            search_box.click()
+            time.sleep(random.uniform(0.3, 0.5))
             
             # Digita a query
             search_box.send_keys(query)
